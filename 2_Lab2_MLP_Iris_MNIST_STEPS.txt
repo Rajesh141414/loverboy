@@ -1,0 +1,160 @@
+=====================================================================
+LAB 2 - MLP (FULLY CONNECTED NETWORK): IRIS, MNIST, FASHION-MNIST
+        STEP-BY-STEP GUIDE
+=====================================================================
+
+GENERAL RECIPE FOR ANY MLP QUESTION
+ 1. Import libraries
+ 2. Load data, separate features (x) and labels (y)
+ 3. Preprocess  (tabular: StandardScaler | images: flatten + /255)
+ 4. Encode labels (one-hot OR keep integers - decides the loss)
+ 5. Split into train/test
+ 6. Layer 1 (hidden, relu)  -> Layer 2 (hidden) -> ... -> Output (softmax)
+ 7. Compile (optimizer + loss + metric)
+ 8. Train (fit)
+ 9. Evaluate / check overfitting / count parameters
+
+LOSS RULE:  integer labels   -> "sparse_categorical_crossentropy"
+            one-hot labels   -> "categorical_crossentropy"
+PARAM RULE: Dense params = (inputs x units) + units
+
+---------------------------------------------------------------------
+STEP 1 - Libraries
+---------------------------------------------------------------------
+import numpy as np                            # arrays
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers           # Dense layers
+from tensorflow.keras.models import Sequential # layer-by-layer model
+from tensorflow.keras.utils import to_categorical  # one-hot encoding
+from sklearn.datasets import load_iris        # iris dataset
+from sklearn.preprocessing import StandardScaler  # scaling
+from sklearn.model_selection import train_test_split  # split data
+import matplotlib.pyplot as plt
+
+=====================================================================
+PART A - IRIS (tabular, 4 features, 3 classes)
+=====================================================================
+STEP 2 - Load and separate
+iris = load_iris()
+x = iris.data                  # shape (150, 4) -> features
+y = iris.target                # shape (150,)   -> labels 0/1/2
+
+STEP 3 - Scale features
+x = StandardScaler().fit_transform(x)   # mean 0, std 1 -> helps training
+
+STEP 4 - One-hot labels
+y = to_categorical(y, 3)       # 0 -> [1,0,0], 1 -> [0,1,0], 2 -> [0,0,1]
+
+STEP 5 - Split
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)  # 80/20
+
+STEP 6 - Layers
+model = Sequential([
+    tf.keras.Input(shape=(4,)),            # input layer: 4 features
+    layers.Dense(16, activation='relu'),   # hidden 1: 16 neurons (params = 4*16+16 = 80)
+    layers.Dense(8, activation='relu'),    # hidden 2: 8 neurons  (params = 16*8+8 = 136)
+    layers.Dense(3, activation='softmax')  # output: 3 class probabilities (8*3+3 = 27)
+])
+
+STEP 7 - Compile
+model.compile(optimizer='adam',                  # adaptive optimizer
+              loss='categorical_crossentropy',   # because labels are one-hot
+              metrics=['accuracy'])
+
+STEP 8 - Train
+history = model.fit(x_train, y_train, epochs=20, batch_size=8, validation_split=0.1)
+# validation_split=0.1 -> last 10% of training data is used for validation
+
+STEP 9 - Evaluate
+loss, acc = model.evaluate(x_test, y_test)   # accuracy on unseen test data
+
+=====================================================================
+PART B - MNIST (28x28 digits, 10 classes)
+=====================================================================
+STEP 2 - Load
+from keras.datasets import mnist
+(x_train, y_train), (x_test, y_test) = mnist.load_data()   # (60000,28,28) and (10000,28,28)
+print(x_train.shape, y_train.shape)                        # "know your data"
+
+STEP 3 - Flatten + normalize (MLP needs a vector, not a 2D image)
+train_images = x_train.reshape((60000, 28 * 28)).astype("float32") / 255  # 784 values in 0-1
+test_images  = x_test.reshape((10000, 28 * 28)).astype("float32") / 255
+
+STEP 4 - Labels stay as integers (0-9) -> use sparse loss
+
+STEP 6 - Layers
+model = keras.Sequential([
+    layers.Input(shape=(784,)),               # input: 784 pixels
+    layers.Dense(512, activation='relu'),     # hidden 1: 784*512+512 = 401,920 params
+    layers.Dense(256, activation='relu'),     # hidden 2: 512*256+256 = 131,328 params
+    layers.Dense(10, activation='softmax')    # output: 256*10+10 = 2,570 params
+])
+model.summary()                               # prints layers, shapes, params
+
+STEP 7 - Compile
+model.compile(optimizer="rmsprop",
+              loss="sparse_categorical_crossentropy",   # integer labels
+              metrics=["accuracy"])
+
+STEP 8 - Train
+history = model.fit(train_images, y_train, epochs=10, batch_size=256, validation_split=0.1)
+
+STEP 9 - Evaluate
+model.evaluate(train_images, y_train)         # train accuracy
+model.evaluate(test_images, y_test)           # test accuracy
+
+---------------------------------------------------------------------
+TASK 1 - Overfitting check
+---------------------------------------------------------------------
+train_loss, train_acc = model.evaluate(train_images, y_train, verbose=0)
+test_loss,  test_acc  = model.evaluate(test_images,  y_test,  verbose=0)
+print('Overfitting:' if train_acc - test_acc > 0.05 else 'No significant overfitting.')
+# big gap (train >> test) = model memorised training data
+
+---------------------------------------------------------------------
+TASK 2 - Different hyperparameters (new model)
+---------------------------------------------------------------------
+train_cat = keras.utils.to_categorical(y_train, 10)   # one-hot because we change loss
+test_cat  = keras.utils.to_categorical(y_test, 10)
+model2 = keras.Sequential([
+    layers.Input(shape=(784,)),
+    layers.Dense(256, activation='tanh'),    # different units + activation
+    layers.Dense(128, activation='tanh'),
+    layers.Dense(64, activation='tanh'),     # 3 hidden layers instead of 2
+    layers.Dense(10, activation='softmax')
+])
+model2.compile(optimizer=keras.optimizers.Adam(learning_rate=0.001),  # different optimizer
+               loss='categorical_crossentropy', metrics=['accuracy']) # matches one-hot labels
+model2.fit(train_images, train_cat, epochs=5, batch_size=128, validation_split=0.1)
+
+---------------------------------------------------------------------
+TASK 3 - Count parameters by hand
+---------------------------------------------------------------------
+p1 = (784 * 512) + 512     # layer 1 = weights + biases
+p2 = (512 * 256) + 256     # layer 2
+p3 = (256 * 10) + 10       # output layer
+print(p1 + p2 + p3, model.count_params())   # my total vs Keras total (must match: 535,818)
+
+=====================================================================
+PART C - FASHION-MNIST (same steps, different data)
+=====================================================================
+(f_train, f_train_y), (f_test, f_test_y) = keras.datasets.fashion_mnist.load_data()  # 10 clothing classes
+f_train = f_train.reshape(60000, 784).astype("float32") / 255    # flatten + normalize
+f_test  = f_test.reshape(10000, 784).astype("float32") / 255
+fashion_model = keras.Sequential([
+    layers.Input(shape=(784,)),
+    layers.Dense(128, activation='relu'),    # 784*128+128 = 100,480 params
+    layers.Dense(64, activation='relu'),     # 128*64+64   = 8,256
+    layers.Dense(10, activation='softmax')   # 64*10+10    = 650   -> total 109,386
+])
+fashion_model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+fashion_model.fit(f_train, f_train_y, epochs=5, batch_size=128, validation_split=0.1)
+# Then repeat Task 1 (overfit check), Task 2 (new hyperparameters, e.g. SGD lr=0.01), Task 3 (params).
+
+---------------------------------------------------------------------
+RESULT / WHAT TO SAY
+---------------------------------------------------------------------
+- Report train vs test accuracy, say whether overfitting (gap > 0.05).
+- Mention what you changed (units, activation, optimizer, epochs) and its effect.
+- Hyperparameters: layers, units, activation, optimizer, learning rate, epochs, batch size.

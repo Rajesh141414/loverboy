@@ -1,0 +1,109 @@
+=====================================================================
+LAB 5 - KALMAN FILTER ON NOISY DATA   STEP-BY-STEP GUIDE
+=====================================================================
+IDEA: the Kalman filter estimates the true value from noisy measurements.
+At each step it PREDICTS, then CORRECTS the prediction using the new
+measurement, weighted by the Kalman gain k.
+
+STEPS
+ 1. Import libraries
+ 2. Generate clean cubic data
+ 3. Add Gaussian noise
+ 4. Create arrays and set initial values + q, r
+ 5. Kalman loop (predict -> gain -> update -> error update)
+ 6. Plot estimate vs noisy measurements
+ 7. Repeat with other q, r values and explain
+ 8. Add a noise spike and observe
+
+KEY PARAMETERS
+ q = process noise  : how much the true value is expected to change
+ r = measurement noise : how noisy the measurements are believed to be
+ k = phat / (phat + r)  (Kalman gain, between 0 and 1)
+     k near 1 -> trust the measurement (follows data, noisy)
+     k near 0 -> trust the previous estimate (smooth, but lags)
+
+---------------------------------------------------------------------
+STEP 1 - Libraries
+---------------------------------------------------------------------
+import numpy as np                    # arrays + random noise
+import matplotlib.pyplot as plt       # plots
+# (the notebook also imports sklearn items; they are not used by the Kalman code)
+
+---------------------------------------------------------------------
+STEP 2 - Clean data (cubic)
+---------------------------------------------------------------------
+x = np.linspace(0, 6, 80).reshape(-1, 1)                           # 80 points from 0 to 6, shape (80,1)
+y = 0.5 * x[:, 0]**3 - 2 * x[:, 0]**2 + 3 * x[:, 0] + 5          # y = 0.5x^3 - 2x^2 + 3x + 5
+plt.scatter(x, y, marker='+'); plt.show()                          # view clean curve
+
+---------------------------------------------------------------------
+STEP 3 - Add noise
+---------------------------------------------------------------------
+noise = np.random.normal(0, 4, size=len(x))     # Gaussian noise: mean 0, std 4, one value per point
+y = y + noise                                   # noisy measurements
+
+---------------------------------------------------------------------
+STEP 4 - Initialisation
+---------------------------------------------------------------------
+n_iter = 80                                     # number of measurements
+sz = (n_iter,)
+xhat = np.zeros(sz)    # predicted state (before seeing measurement)
+phat = np.zeros(sz)    # predicted error covariance
+x = np.zeros(sz)       # filtered estimate (OUTPUT)   <- overwrites old x!
+p = np.zeros(sz)       # error covariance after update
+k = np.zeros(sz)       # Kalman gain
+n = y                  # measurements (n = y does NOT copy; use y.copy() to be safe)
+x[0] = n[0]            # start estimate from first measurement
+p[0] = 1.0             # initial uncertainty
+q = 1e-5               # process noise
+r = 0.001              # measurement noise
+
+---------------------------------------------------------------------
+STEP 5 - Kalman loop
+---------------------------------------------------------------------
+for z in range(1, n_iter):
+    xhat[z] = x[z-1]                              # PREDICT: next value = previous estimate
+    phat[z] = p[z-1] + q                          # PREDICT: uncertainty grows by process noise q
+    k[z] = phat[z] / (phat[z] + r)                # GAIN: how much to trust the new measurement
+    x[z] = xhat[z] + k[z] * (n[z] - xhat[z])      # UPDATE: prediction + gain * (measurement - prediction)
+    p[z] = (1 - k[z]) * phat[z]                   # UPDATE: uncertainty shrinks after correction
+
+---------------------------------------------------------------------
+STEP 6 - Plot
+---------------------------------------------------------------------
+plt.scatter(np.arange(n_iter), n, label="Noisy Measurements", color="gray", alpha=0.5, marker='+')  # raw data
+plt.plot(x, label="Kalman Filter Estimate", color="red", linewidth=2)                               # filtered curve
+plt.xlabel("Iteration"); plt.ylabel("y"); plt.title("Prediction"); plt.legend(); plt.show()
+
+---------------------------------------------------------------------
+STEP 7 - Lab tasks (only q and r change; rest of code identical)
+---------------------------------------------------------------------
+Task 1: q = 0.01, r = 64      # r large vs q small -> small gain -> very smooth, lags behind the signal
+Task 2: q = 10,   r = 64      # q large -> uncertainty grows -> larger gain -> follows measurements more
+Task 3: q = 1,    r = 10      # in between -> moderate smoothing
+(Re-create the zero arrays and x[0], p[0] before each run, then run loop + plot.)
+
+Easier: put the loop in a function
+def kalman(n, q, r):
+    x = np.zeros(len(n)); p = np.zeros(len(n)); x[0] = n[0]; p[0] = 1.0   # init
+    for z in range(1, len(n)):
+        phat = p[z-1] + q                         # predicted covariance
+        k = phat / (phat + r)                     # gain
+        x[z] = x[z-1] + k * (n[z] - x[z-1])       # updated estimate
+        p[z] = (1 - k) * phat                     # updated covariance
+    return x
+
+---------------------------------------------------------------------
+STEP 8 - Noise spike between 50-60
+---------------------------------------------------------------------
+n = y.copy()            # copy so y stays unchanged
+n[50:60] += 80          # add +80 to measurements 50..59 (sudden disturbance)
+q = 1e-5; r = 0.0001    # tiny r => filter trusts measurements => estimate jumps with the spike
+# run loop + plot again. Larger r would make the filter resist the spike.
+
+---------------------------------------------------------------------
+RESULT / WHAT TO SAY
+---------------------------------------------------------------------
+- Small r / large q  -> estimate follows noisy data closely.
+- Large r / small q  -> smooth estimate, slow to react.
+- Describe what YOUR plots show (shapes depend on the random noise).

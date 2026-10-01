@@ -1,0 +1,262 @@
+=====================================================================
+LAB 3 - CNN (CIFAR-10)  +  LAB 3b - SMALL RESNET   (STEP-BY-STEP GUIDE)
+=====================================================================
+
+PART 1 : CNN - "design 3 conv layers + 2 fully connected layers"
+PART 2 : Lab task - 4-class vehicle classifier (hyperparameter loops)
+PART 3 : ResNet (residual block, small ResNet, experiments, LeNet-5)
+
+=====================================================================
+PART 1 - CNN: 3 CONV LAYERS + 2 FULLY CONNECTED LAYERS
+=====================================================================
+STEPS
+ 1. Import libraries
+ 2. Load CIFAR-10, filter classes, remap labels
+ 3. Split train/validation (80/20) and normalize
+ 4. Conv layer 1  -> pooling
+ 5. Conv layer 2  -> pooling
+ 6. Conv layer 3  -> pooling
+ 7. Flatten (3D feature maps -> 1D vector) so Dense layers can use it
+ 8. Fully connected layer 1 (hidden)
+ 9. Fully connected layer 2 (output, softmax)
+10. Compile
+11. Train
+12. Evaluate, plot curves, predict 10 random images
+
+---------------------------------------------------------------------
+STEP 1 - Libraries
+---------------------------------------------------------------------
+import numpy as np                                  # arrays, filtering
+import matplotlib.pyplot as plt                     # plots
+import tensorflow as tf
+from tensorflow.keras.datasets import cifar10       # dataset
+from tensorflow.keras.models import Sequential      # stack layers one after another
+from tensorflow.keras.layers import Input, Conv2D, MaxPooling2D, Dropout, Flatten, Dense, BatchNormalization
+from sklearn.model_selection import train_test_split  # train/val split
+
+---------------------------------------------------------------------
+STEP 2 - Load, filter, remap  (airplane, automobile, ship, truck)
+---------------------------------------------------------------------
+(x_train, y_train), (x_test, y_test) = cifar10.load_data()   # x: (50000,32,32,3)  y: (50000,1)
+classes = [0, 1, 8, 9]                                       # CIFAR ids: airplane, automobile, ship, truck
+train_idx = np.isin(y_train.flatten(), classes)              # True where label is one of our classes
+test_idx  = np.isin(y_test.flatten(), classes)
+x_train, y_train = x_train[train_idx], y_train[train_idx].flatten()   # keep only wanted images
+x_test,  y_test  = x_test[test_idx],   y_test[test_idx].flatten()
+label_map = {0: 0, 1: 1, 8: 2, 9: 3}                         # old label -> new label (0..3)
+y_train = np.array([label_map[v] for v in y_train])          # remap so softmax has 4 outputs
+y_test  = np.array([label_map[v] for v in y_test])
+# other CIFAR ids: 2 bird, 3 cat, 4 deer, 5 dog, 6 frog, 7 horse
+
+---------------------------------------------------------------------
+STEP 3 - Split + normalize
+---------------------------------------------------------------------
+x_train, x_val, y_train, y_val = train_test_split(
+    x_train, y_train, test_size=0.20, random_state=42, stratify=y_train)  # 80/20, same class ratio
+x_train = x_train.astype("float32") / 255.0                  # pixels 0-255 -> 0-1
+x_val   = x_val.astype("float32") / 255.0
+x_test  = x_test.astype("float32") / 255.0
+# (min-max normalization; same for all three sets)
+
+---------------------------------------------------------------------
+STEPS 4-9 - The model (shape is shown beside every layer)
+---------------------------------------------------------------------
+model = Sequential([
+    Input(shape=(32, 32, 3)),                                  # 32x32 RGB image
+
+    # STEP 4 - CONV LAYER 1: finds simple patterns (edges, colours)
+    Conv2D(32, (3, 3), activation='relu', padding='same'),     # 32 filters 3x3 -> 32x32x32 | params (3*3*3+1)*32 = 896
+    MaxPooling2D(2, 2),                                        # halves size -> 16x16x32
+
+    # STEP 5 - CONV LAYER 2: combines edges into shapes
+    Conv2D(64, (3, 3), activation='relu', padding='same'),     # -> 16x16x64 | params (3*3*32+1)*64 = 18,496
+    MaxPooling2D(2, 2),                                        # -> 8x8x64
+
+    # STEP 6 - CONV LAYER 3: finds higher-level parts (wheels, wings)
+    Conv2D(128, (3, 3), activation='relu', padding='same'),    # -> 8x8x128 | params (3*3*64+1)*128 = 73,856
+    MaxPooling2D(2, 2),                                        # -> 4x4x128
+
+    # STEP 7 - FLATTEN: feature maps -> one long vector
+    Flatten(),                                                 # 4*4*128 = 2048 values, no params
+
+    # STEP 8 - FULLY CONNECTED 1 (hidden): learns combinations of features
+    Dense(128, activation='relu'),                             # 2048*128+128 = 262,272 params
+    Dropout(0.5),                                              # randomly turns off 50% neurons while training -> less overfitting
+
+    # STEP 9 - FULLY CONNECTED 2 (output): class probabilities
+    Dense(4, activation='softmax')                             # 128*4+4 = 516 params; 4 outputs add up to 1
+])
+model.summary()                                                # check shapes & total params (356,036)
+
+Why each part:
+ - padding='same'     : output keeps same height/width as input
+ - relu               : adds non-linearity, fast
+ - MaxPooling2D(2,2)  : keeps strongest value in each 2x2 block -> smaller, faster
+ - Dropout            : regularization (fights overfitting)
+ - softmax            : turns outputs into probabilities
+ - BatchNormalization : (optional, used in my lab solution) stabilises training - put after Conv2D
+
+For "2 conv + 3 FC": delete conv layer 3, add one more Dense(...) before the output.
+Change input to match: Flatten size = (32 / 2^number_of_pools)^2 * last_filters.
+
+---------------------------------------------------------------------
+STEP 10 - Compile
+---------------------------------------------------------------------
+model.compile(optimizer='adam',                       # optimizer (learning rate default 0.001)
+              loss='sparse_categorical_crossentropy', # integer labels 0..3
+              metrics=['accuracy'])                   # report accuracy
+
+---------------------------------------------------------------------
+STEP 11 - Train
+---------------------------------------------------------------------
+history = model.fit(x_train, y_train, epochs=30, batch_size=128,
+                    validation_data=(x_val, y_val))   # validation checked after every epoch
+
+---------------------------------------------------------------------
+STEP 12 - Results
+---------------------------------------------------------------------
+test_loss, test_acc = model.evaluate(x_test, y_test, verbose=1)   # accuracy on the whole test set
+print("Test accuracy:", test_acc)
+
+plt.plot(history.history['accuracy'], label='Train')              # learning curve
+plt.plot(history.history['val_accuracy'], label='Validation')     # if val << train => overfitting
+plt.legend(); plt.show()
+# do the same for 'loss' / 'val_loss'
+
+# Predict 10 random test images
+idx = np.random.choice(len(x_test), 10, replace=False)            # 10 random positions
+pred = np.argmax(model.predict(x_test[idx]), axis=1)              # highest probability = predicted class
+names = ["Airplane", "Automobile", "Ship", "Truck"]
+for i, k in enumerate(idx):
+    plt.subplot(2, 5, i + 1)
+    plt.imshow(x_test[k])                                         # show image
+    plt.title("True: " + names[y_test[k]] + "\nPred: " + names[pred[i]])
+    plt.axis("off")
+plt.show()
+
+=====================================================================
+PART 2 - HYPERPARAMETER LOOPS ("use for loops to adjust hyperparameters")
+=====================================================================
+STEPS: wrap model in a function -> loop over values -> keep best -> retrain.
+
+def create_model(filters=32, dropout=0.25, learning_rate=0.001):   # function = reusable model
+    model = Sequential([
+        Input(shape=(32, 32, 3)),
+        Conv2D(filters, (3, 3), padding="same", activation="relu"),     # conv 1
+        BatchNormalization(),                                           # normalise activations
+        Conv2D(filters, (3, 3), padding="same", activation="relu"),     # conv 2
+        MaxPooling2D((2, 2)), Dropout(dropout),                         # 32->16, regularize
+        Conv2D(filters * 2, (3, 3), padding="same", activation="relu"), # conv 3 (double filters)
+        BatchNormalization(),
+        Conv2D(filters * 2, (3, 3), padding="same", activation="relu"), # conv 4
+        MaxPooling2D((2, 2)), Dropout(dropout),                         # 16->8
+        Flatten(),                                                      # 8*8*(2*filters) values
+        Dense(256, activation="relu"), Dropout(0.5),                    # FC hidden
+        Dense(4, activation="softmax")                                  # output
+    ])
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate),
+                  loss="sparse_categorical_crossentropy", metrics=["accuracy"])
+    return model
+
+results = []
+for filters in [32, 64]:                          # loop 1: number of filters
+    for dropout in [0.25, 0.35]:                  # loop 2: dropout rate
+        m = create_model(filters, dropout, 0.001)
+        h = m.fit(x_train, y_train, epochs=8, batch_size=128,
+                  validation_data=(x_val, y_val), verbose=0)   # verbose=0 -> silent
+        results.append((max(h.history["val_accuracy"]), filters, dropout))  # store best val accuracy
+
+best_acc, best_filters, best_dropout = max(results, key=lambda r: r[0])    # combo with highest val acc
+model = create_model(best_filters, best_dropout, 0.001)                    # final model
+history = model.fit(x_train, y_train, epochs=30, batch_size=128, validation_data=(x_val, y_val))
+# Then Step 12 (evaluate on test; target > 90%).
+
+Q: What are the hyperparameters?
+A: number of filters, dropout rate, learning rate, batch size, epochs, optimizer,
+   number of layers, kernel size.
+If test accuracy < 90%: more epochs, more conv layers/filters, add BatchNormalization.
+
+=====================================================================
+PART 3 - RESNET (Lab 3b)
+=====================================================================
+IDEA: a shortcut (skip) connection adds the block's input to its output:
+      output = F(x) + x. The block only learns the "residual" F(x), which makes
+      deeper networks easier to train (reduces the degradation problem).
+
+STEPS
+ 1. Load CIFAR-10 (all 10 classes), normalize, one-hot labels
+ 2. Residual block function
+ 3. Build ResNet: first conv -> 3 stages of residual blocks -> pooling -> output
+ 4. Compile + train + evaluate (timed)
+ 5. Experiment A: reduce depth
+ 6. Experiment B: filters 32-64-128
+ 7. LeNet-5 for comparison
+ 8. Compare table (parameters, time, accuracy)
+
+STEP 1 - Data
+import time, tensorflow as tf
+from tensorflow.keras import layers, Model         # Functional API pieces
+(x_train, y_train), (x_test, y_test) = tf.keras.datasets.cifar10.load_data()
+x_train = x_train.astype("float32") / 255.0        # normalize
+x_test  = x_test.astype("float32") / 255.0
+y_train = tf.keras.utils.to_categorical(y_train, 10)   # one-hot -> use categorical_crossentropy
+y_test  = tf.keras.utils.to_categorical(y_test, 10)
+
+STEP 2 - Residual block
+def residual_block(x, filters, stride=1):
+    shortcut = x                                                   # save input for skip connection
+    x = layers.Conv2D(filters, 3, strides=stride, padding="same", use_bias=False)(x)  # conv 1 (stride 2 shrinks image)
+    x = layers.BatchNormalization()(x)                             # stabilise training (bias not needed with BN)
+    x = layers.ReLU()(x)
+    x = layers.Conv2D(filters, 3, strides=1, padding="same", use_bias=False)(x)       # conv 2
+    x = layers.BatchNormalization()(x)
+    if stride != 1 or shortcut.shape[-1] != filters:               # shapes differ -> cannot add directly
+        shortcut = layers.Conv2D(filters, 1, strides=stride, padding="same", use_bias=False)(shortcut)  # 1x1 conv matches shape
+        shortcut = layers.BatchNormalization()(shortcut)
+    x = layers.Add()([x, shortcut])                                # F(x) + x  <- the residual connection
+    return layers.ReLU()(x)
+
+STEP 3 - Small ResNet (shape beside each stage)
+inputs = layers.Input(shape=(32, 32, 3))
+x = layers.Conv2D(64, 3, padding="same", use_bias=False)(inputs)   # initial conv -> 32x32x64
+x = layers.BatchNormalization()(x); x = layers.ReLU()(x)
+x = residual_block(x, 64);  x = residual_block(x, 64)              # stage 1: 32x32x64
+x = residual_block(x, 128, stride=2); x = residual_block(x, 128)   # stage 2: 16x16x128 (stride 2 halves size)
+x = residual_block(x, 256, stride=2); x = residual_block(x, 256)   # stage 3: 8x8x256
+x = layers.GlobalAveragePooling2D()(x)                             # average each map -> 256 values (replaces Flatten)
+outputs = layers.Dense(10, activation="softmax")(x)                # 10 class probabilities
+model = Model(inputs, outputs)                                     # Functional API: model from input to output
+
+STEP 4 - Compile / train / evaluate
+model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
+              loss="categorical_crossentropy", metrics=["accuracy"])   # one-hot -> categorical
+start = time.perf_counter()                                        # start timer
+model.fit(x_train, y_train, batch_size=512, epochs=10, validation_split=0.1)
+train_time = time.perf_counter() - start                           # seconds taken
+test_loss, test_acc = model.evaluate(x_test, y_test, verbose=0)
+print(model.count_params(), train_time, test_acc)                  # the 3 comparison values
+
+STEP 5 - Reduce depth: use 1 block per stage instead of 2 (remove the second
+         residual_block call in each stage). Fewer params, faster, may lose accuracy.
+STEP 6 - Filters 32-64-128: change 64/128/256 to 32/64/128 everywhere.
+         Fewer params, faster, may lose accuracy.
+         (The lab solution does both by making build_resnet(filter_sizes, blocks_per_stage).)
+
+STEP 7 - LeNet-5 (tiny classic CNN)
+x = layers.Conv2D(6, 5, activation="tanh", padding="valid")(inputs)    # 6 filters 5x5 -> 28x28x6
+x = layers.AveragePooling2D(2)(x)                                      # -> 14x14x6
+x = layers.Conv2D(16, 5, activation="tanh", padding="valid")(x)        # -> 10x10x16
+x = layers.AveragePooling2D(2)(x)                                      # -> 5x5x16
+x = layers.Flatten()(x)                                                # 400 values
+x = layers.Dense(120, activation="tanh")(x)                            # FC 1
+x = layers.Dense(84, activation="tanh")(x)                             # FC 2
+outputs = layers.Dense(10, activation="softmax")(x)                    # output
+
+STEP 8 - Compare results: build a table (pandas DataFrame) of
+         Model | Parameters | Training time | Test loss | Test accuracy
+         Say which has best accuracy, fewest params, shortest time.
+         Typical expectation (not guaranteed - report YOUR numbers): ResNet beats
+         LeNet-5 in accuracy but has many more params and trains slower.
+
+NOTE: model.fit(...) returns the history. For accuracy/loss curves,
+      store it: result = model.fit(...), then plot result.history[...].

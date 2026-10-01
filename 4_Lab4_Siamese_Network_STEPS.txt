@@ -1,0 +1,166 @@
+=====================================================================
+LAB 4 - SIAMESE NETWORK (MNIST)   STEP-BY-STEP GUIDE
+=====================================================================
+IDEA: a Siamese network takes TWO images, passes both through the SAME
+network (shared weights) to get two embeddings (vectors), and outputs the
+distance between them. Small distance = same digit, large = different.
+
+STEPS
+ 1. Import libraries
+ 2. Load train.csv / test.csv, split features and labels
+ 3. Reshape to 28x28x1 and normalize
+ 4. Make train / validation sets
+ 5. Create image PAIRS with label 1 (same digit) / 0 (different)
+ 6. Define Euclidean distance function
+ 7. Define contrastive loss
+ 8. Shared base network (the "twin")
+ 9. Build the Siamese model (two inputs -> one distance output)
+10. Compile + train
+11. Compute accuracy (distance < 0.5 => same)
+12. Show pairs and distances
+13. Retrain with different epochs and compare
+
+---------------------------------------------------------------------
+STEP 1 - Libraries
+---------------------------------------------------------------------
+import os, time, random
+import numpy as np
+import pandas as pd                                   # read csv
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras.models import Model             # Functional API model
+from tensorflow.keras.layers import Input, Flatten, Dense, Dropout, Lambda   # Lambda = custom function layer
+from tensorflow.keras import backend as K             # low-level math (sum, square, sqrt)
+from tensorflow.keras.optimizers import RMSprop
+
+---------------------------------------------------------------------
+STEP 2 - Load data and split features/labels
+---------------------------------------------------------------------
+train_df = pd.read_csv(r"C:\path\to\train.csv")       # CHANGE path on lab PC
+test_df  = pd.read_csv(r"C:\path\to\test.csv")
+y_train = train_df["label"].to_numpy(dtype=np.int64)               # digit labels, shape (42000,)
+X = train_df.drop(columns=["label"]).to_numpy(dtype=np.uint8)      # pixel columns, shape (42000, 784)
+X_test_raw = test_df.to_numpy(dtype=np.uint8)                      # test has no label column
+print(X.shape, y_train.shape)
+# Explain: 42,000 images, each 784 = 28x28 pixels; one label per image.
+
+---------------------------------------------------------------------
+STEP 3 - Reshape + normalize
+---------------------------------------------------------------------
+X_train = X.reshape((-1, 28, 28, 1)).astype("float32") / 255.0     # -1 = auto count; 1 = grayscale channel; scale 0-1
+X_test  = X_test_raw.reshape((-1, 28, 28, 1)).astype("float32") / 255.0
+
+---------------------------------------------------------------------
+STEP 4 - Train / validation split
+---------------------------------------------------------------------
+X_val,  y_val  = X_train[:2000], y_train[:2000]        # first 2000 images = validation
+X_train2, y_train2 = X_train[2000:], y_train[2000:]    # rest = training
+
+---------------------------------------------------------------------
+STEP 5 - Create pairs
+---------------------------------------------------------------------
+def create_pairs(X, y, min_equals=3000, seed=42):
+    pairs, labels = [], []
+    rng = np.random.default_rng(seed)                                  # reproducible random generator
+    class_indices = [np.where(y == d)[0] for d in range(10)]           # list of image indexes for each digit
+    equal_count = 0
+    for i in range(len(X)):
+        if equal_count < min_equals:
+            j = int(rng.choice(class_indices[y[i]]))                   # pick a SAME-digit partner
+            equal_count += 1
+        else:
+            j = int(rng.integers(0, len(X)))                           # pick ANY partner (usually different)
+        labels.append(int(y[i] == y[j]))                               # 1 if same digit, else 0
+        pairs.append([X[i], X[j]])                                     # store the pair
+    return np.asarray(pairs, dtype=np.float32), np.asarray(labels, dtype=np.int32)
+
+training_pairs, training_labels = create_pairs(X_train2, y_train2, min_equals=15000, seed=42)
+val_pairs, val_labels = create_pairs(X_val, y_val, min_equals=800, seed=43)
+# pairs shape: (N, 2, 28, 28, 1)  -> pairs[:,0] = left image, pairs[:,1] = right image
+print(np.bincount(training_labels))       # count of different(0) vs same(1) pairs
+
+---------------------------------------------------------------------
+STEP 6 - Euclidean distance (output layer function)
+---------------------------------------------------------------------
+def euclidean_distance(vects):
+    x, y = vects                                                       # the two embeddings
+    sum_square = K.sum(K.square(x - y), axis=1, keepdims=True)         # sum of squared differences
+    return K.sqrt(K.maximum(sum_square, K.epsilon()))                  # sqrt; epsilon avoids sqrt(0) gradient problem
+
+---------------------------------------------------------------------
+STEP 7 - Contrastive loss
+---------------------------------------------------------------------
+def contrastive_loss_with_margin(margin):
+    def contrastive_loss(y_true, y_pred):                              # y_pred = predicted distance
+        y_true = K.cast(y_true, y_pred.dtype)                          # make label float
+        square_pred = K.square(y_pred)                                 # d^2
+        margin_square = K.square(K.maximum(margin - y_pred, 0))        # max(margin-d, 0)^2
+        return y_true * square_pred + (1 - y_true) * margin_square     # same pair: pull d to 0 | different: push d beyond margin
+    return contrastive_loss
+
+---------------------------------------------------------------------
+STEP 8 - Shared base network (the twin)
+---------------------------------------------------------------------
+def initialize_base_branch():
+    base_input = Input(shape=(28, 28, 1))                  # one image
+    x = Flatten()(base_input)                              # 28*28 -> 784
+    x = Dense(128, activation="relu")(x)                   # layer 1
+    x = Dropout(0.3)(x)                                    # regularization
+    x = Dense(128, activation="relu")(x)                   # layer 2
+    x = Dropout(0.3)(x)
+    x = Dense(128, activation="relu")(x)                   # layer 3 -> 128-value embedding
+    return Model(inputs=base_input, outputs=x, name="shared_base")
+base_model = initialize_base_branch()
+
+---------------------------------------------------------------------
+STEP 9 - Siamese model
+---------------------------------------------------------------------
+input_l = Input(shape=(28, 28, 1))                         # left image input
+input_r = Input(shape=(28, 28, 1))                         # right image input
+vect_l = base_model(input_l)                               # SAME base model ->
+vect_r = base_model(input_r)                               # SAME weights for both images
+output = Lambda(euclidean_distance)([vect_l, vect_r])      # distance between embeddings (1 number)
+model = Model(inputs=[input_l, input_r], outputs=output)   # 2 inputs, 1 output
+model.summary()
+
+---------------------------------------------------------------------
+STEP 10 - Compile + train
+---------------------------------------------------------------------
+model.compile(loss=contrastive_loss_with_margin(margin=1.0), optimizer=RMSprop())  # custom loss, margin 1
+start = time.time()
+history = model.fit([training_pairs[:, 0], training_pairs[:, 1]], training_labels,   # list of 2 inputs
+                    epochs=20, batch_size=128,
+                    validation_data=([val_pairs[:, 0], val_pairs[:, 1]], val_labels))
+elapsed = time.time() - start                              # training time
+
+---------------------------------------------------------------------
+STEP 11 - Accuracy
+---------------------------------------------------------------------
+def compute_accuracy(y_true, y_pred):
+    pred = y_pred.ravel() < 0.5        # ravel(): (N,1)->(N,) ; distance<0.5 => True => "same" (1)
+    return np.mean(pred == y_true)     # fraction of correct predictions
+
+y_pred_train = model.predict([training_pairs[:, 0], training_pairs[:, 1]], verbose=0)
+print(compute_accuracy(training_labels, y_pred_train))
+
+---------------------------------------------------------------------
+STEP 12 - Show pairs with distances
+---------------------------------------------------------------------
+idx = np.random.choice(len(y_pred_train), size=8, replace=False)   # 8 random pairs
+# plot pairs[idx,0] on top row, pairs[idx,1] on bottom row, title = distance and true label
+# (use display_images(...) from the full-code file; for 20 pairs set size=20 and n=20)
+
+---------------------------------------------------------------------
+STEP 13 - Retrain with 30 epochs and compare
+---------------------------------------------------------------------
+# build a FRESH base_model + siamese model (new weights), same compile,
+# fit with epochs=30, then compute accuracy again.
+# Compare: train acc, val acc, losses, time.
+# If train acc up but val acc down => overfitting. If both up => more epochs helped.
+
+---------------------------------------------------------------------
+RESULT / WHAT TO SAY
+---------------------------------------------------------------------
+- Same pair -> small distance; different pair -> large distance.
+- Threshold 0.5 converts distance to a class prediction.
+- Report train/val accuracy and training time for both epoch settings.
